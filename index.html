@@ -251,18 +251,18 @@
             
             <!-- WebSocket Connection Panel -->
             <div class="websocket-panel" id="websocketPanel" style="display: none;">
-                <h3>🔗 Lens Studio Connection</h3>
+                <h3>🔗 Multi-User Session</h3>
                 <input type="text" 
                        id="sessionCodeInput" 
                        class="session-input" 
-                       placeholder="Enter session code"
-                       maxlength="6">
+                       placeholder="Enter 7-character keycode"
+                       maxlength="7">
                 <button id="connectBtn" class="connect-btn">Connect to Session</button>
                 <div id="connectionStatus" class="connection-status status-disconnected">
                     Disconnected
                 </div>
                 <div class="websocket-info">
-                    Enter the 6-character code from Lens Studio console to connect and stream mouth data.
+                    Enter your unique 7-character keycode from Lens Studio (e.g., ABC123A) to connect and stream mouth data.
                 </div>
             </div>
         </div>
@@ -1108,9 +1108,9 @@
                         }
                     });
                     
-                    // Auto-uppercase and limit to 6 characters
+                    // Auto-uppercase and limit to 7 characters
                     this.sessionCodeInput.addEventListener('input', (e) => {
-                        e.target.value = e.target.value.toUpperCase().slice(0, 6);
+                        e.target.value = e.target.value.toUpperCase().slice(0, 7);
                     });
                 }
             }
@@ -1153,8 +1153,8 @@
                 }
                 
                 const sessionCode = this.sessionCodeInput?.value?.trim()?.toUpperCase();
-                if (!sessionCode || sessionCode.length !== 6) {
-                    alert('Please enter a valid 6-character session code');
+                if (!sessionCode || sessionCode.length !== 7) {
+                    alert('Please enter a valid 7-character keycode (e.g., ABC123A)');
                     return;
                 }
                 
