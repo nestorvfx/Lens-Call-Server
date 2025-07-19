@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face Mesh Tracking</title>
+    <title>Face Mesh Tracking & Data Streaming</title>
     <style>
         * {
             margin: 0;
@@ -60,7 +60,7 @@
             color: #333;
             font-size: 18px;
             font-weight: 400;
-            z-index: 3;
+            z-index: 10;
             text-align: center;
             background: rgba(255, 255, 255, 0.9);
             padding: 20px 30px;
@@ -93,7 +93,7 @@
             color: #d32f2f;
             font-size: 16px;
             text-align: center;
-            z-index: 3;
+            z-index: 10;
             padding: 20px;
             background: rgba(255, 255, 255, 0.95);
             border-radius: 10px;
@@ -114,59 +114,70 @@
             z-index: 4;
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
+            display: none; /* Hidden by default */
         }
 
         /* WebSocket Connection Panel */
         .websocket-panel {
             position: absolute;
-            top: 20px;
-            left: 20px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             background: rgba(0, 0, 0, 0.8);
             color: white;
-            padding: 15px 20px;
+            padding: 25px 30px;
             border-radius: 10px;
             font-family: 'Segoe UI', sans-serif;
             font-size: 14px;
-            z-index: 4;
+            z-index: 5;
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
-            min-width: 250px;
+            width: 320px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.37);
         }
 
         .websocket-panel h3 {
-            margin: 0 0 10px 0;
+            margin: 0 0 15px 0;
             color: #FFC107;
-            font-size: 16px;
+            font-size: 18px;
+            text-align: center;
         }
 
         .session-input {
             width: 100%;
-            padding: 8px 12px;
-            margin: 8px 0;
-            border: none;
+            padding: 12px 15px;
+            margin: 10px 0;
+            border: 1px solid rgba(255,255,255,0.3);
             border-radius: 5px;
-            font-size: 14px;
+            font-size: 18px;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 3px;
             text-align: center;
-            background: rgba(255, 255, 255, 0.9);
-            color: #333;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        .session-input:focus {
+            border-color: #FFC107;
         }
 
         .connect-btn {
             width: 100%;
-            padding: 10px;
+            padding: 12px;
+            margin-top: 5px;
             background: linear-gradient(45deg, #4CAF50, #45a049);
             color: white;
             border: none;
             border-radius: 5px;
-            font-size: 14px;
+            font-size: 16px;
+            font-weight: bold;
             cursor: pointer;
             transition: all 0.3s ease;
         }
 
         .connect-btn:hover:not(:disabled) {
-            transform: translateY(-1px);
+            transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.3);
         }
 
@@ -178,33 +189,37 @@
 
         .connection-status {
             padding: 8px;
-            margin: 8px 0;
+            margin-top: 15px;
             border-radius: 5px;
             text-align: center;
             font-weight: bold;
             font-size: 12px;
+            transition: all 0.3s ease;
         }
 
         .status-disconnected {
             background: rgba(244, 67, 54, 0.3);
             border: 1px solid #f44336;
         }
-
         .status-connected {
             background: rgba(76, 175, 80, 0.3);
             border: 1px solid #4CAF50;
         }
-
         .status-connecting {
             background: rgba(255, 193, 7, 0.3);
             border: 1px solid #FFC107;
+        }
+        .status-error {
+             background: rgba(244, 67, 54, 0.5);
+             border: 1px solid #f44336;
         }
 
         .websocket-info {
             font-size: 11px;
             color: rgba(255, 255, 255, 0.7);
-            margin-top: 8px;
-            line-height: 1.3;
+            margin-top: 15px;
+            line-height: 1.4;
+            text-align: center;
         }
 
         .mouth-bar {
@@ -223,14 +238,6 @@
             transition: width 0.1s ease;
             width: 0%;
         }
-
-        /* Responsive adjustments */
-        @media (max-width: 768px) {
-            .video-container {
-                width: 100vw;
-                height: 100vh;
-            }
-        }
     </style>
 </head>
 <body>
@@ -241,7 +248,7 @@
             <div class="loading" id="loading">
                 Initializing Face Mesh...
             </div>
-            <div class="mouth-meter" id="mouthMeter" style="display: none;">
+            <div class="mouth-meter" id="mouthMeter">
                 <div>Mouth Opening</div>
                 <div class="mouth-bar">
                     <div class="mouth-fill" id="mouthFill"></div>
@@ -250,19 +257,19 @@
             </div>
             
             <!-- WebSocket Connection Panel -->
-            <div class="websocket-panel" id="websocketPanel" style="display: none;">
+            <div class="websocket-panel" id="websocketPanel">
                 <h3>🔗 Lens Studio Connection</h3>
+                <div class="websocket-info">
+                    Enter the 7-character code from the Lens Studio console to stream mouth data.
+                </div>
                 <input type="text" 
                        id="sessionCodeInput" 
                        class="session-input" 
-                       placeholder="Enter session code"
-                       maxlength="6">
+                       placeholder="A1B2C3D"
+                       maxlength="7">
                 <button id="connectBtn" class="connect-btn">Connect to Session</button>
                 <div id="connectionStatus" class="connection-status status-disconnected">
                     Disconnected
-                </div>
-                <div class="websocket-info">
-                    Enter the 6-character code from Lens Studio console to connect and stream mouth data.
                 </div>
             </div>
         </div>
@@ -273,27 +280,40 @@
         import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest';
         window.FaceLandmarker = FaceLandmarker;
         window.FilesetResolver = FilesetResolver;
+
+        // --- WebSocket Integration Module ---
+        // This module is now integrated directly below for simplicity.
     </script>
     
-    <!-- Socket.IO for WebSocket communication -->
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-
     <script>
         const videoElement = document.getElementById('inputVideo');
         const canvasElement = document.getElementById('outputCanvas');
         const canvasCtx = canvasElement.getContext('2d');
         const loadingElement = document.getElementById('loading');
+        
+        // UI Elements
         const mouthMeter = document.getElementById('mouthMeter');
         const mouthFill = document.getElementById('mouthFill');
         const mouthText = document.getElementById('mouthText');
+        const websocketPanel = document.getElementById('websocketPanel');
+        const sessionCodeInput = document.getElementById('sessionCodeInput');
+        const connectBtn = document.getElementById('connectBtn');
+        const connectionStatus = document.getElementById('connectionStatus');
 
         let faceLandmarker = undefined;
         let runningMode = "VIDEO";
-        let enableWebcamButton;
         let webcamRunning = false;
-        const videoWidth = 480;
+        
+        // WebSocket State
+        let socket = null;
+        let isConnected = false;
+        let sevenCharCode = '';
+        const SERVER_URL = 'ws://localhost:3000'; // Change if your server is hosted elsewhere
 
-        // Before we can use FaceLandmarker class we must wait for it to finish loading.
+        // ========================================
+        // MediaPipe Initialization & Logic
+        // ========================================
+
         const createFaceLandmarker = async () => {
             const vision = await FilesetResolver.forVisionTasks(
                 "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
@@ -311,29 +331,19 @@
             console.log("Face Landmarker loaded");
         };
 
-        // Enable the live webcam view and start detection.
         const enableCam = async () => {
             if (!faceLandmarker) {
                 console.log("Wait! Face Landmarker not loaded yet.");
                 return;
             }
-
             webcamRunning = true;
-
-            // getUsermedia parameters.
-            const constraints = {
-                video: true
-            };
-
-            // Activate the webcam stream.
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             videoElement.srcObject = stream;
             videoElement.addEventListener("loadeddata", predictWebcam);
         };
 
         let lastVideoTime = -1;
         function predictWebcam() {
-            // Now let's start detecting the stream.
             if (runningMode === "IMAGE") {
                 runningMode = "VIDEO";
                 faceLandmarker.setOptions({ runningMode: "VIDEO" });
@@ -342,304 +352,171 @@
             if (videoElement.currentTime !== lastVideoTime) {
                 lastVideoTime = videoElement.currentTime;
                 const results = faceLandmarker.detectForVideo(videoElement, startTimeMs);
-                drawResults(results);
+                
+                if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+                    const mouthOpenRatio = calculateMouthOpenRatio(results.faceLandmarks[0]);
+                    updateMouthMeter(mouthOpenRatio);
+                    
+                    // If connected, stream data to the server
+                    if (isConnected && socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({
+                            type: 'mouth_data',
+                            sevenCharCode: sevenCharCode,
+                            mouthOpenness: mouthOpenRatio
+                        }));
+                    }
+                }
             }
 
-            // Call this function again to keep predicting when the browser is ready.
             if (webcamRunning === true) {
                 window.requestAnimationFrame(predictWebcam);
             }
         }
 
-        function drawResults(results) {
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            
-            // Calculate the actual displayed video size
-            const videoRect = videoElement.getBoundingClientRect();
-            const videoAspectRatio = videoElement.videoWidth / videoElement.videoHeight;
-            const displayAspectRatio = videoRect.width / videoRect.height;
-            
-            let displayWidth, displayHeight, offsetX, offsetY;
-            
-            if (videoAspectRatio > displayAspectRatio) {
-                // Video is wider than display, so height fills and width is cropped
-                displayHeight = videoRect.height;
-                displayWidth = displayHeight * videoAspectRatio;
-                offsetX = (videoRect.width - displayWidth) / 2;
-                offsetY = 0;
-            } else {
-                // Video is taller than display, so width fills and height is cropped
-                displayWidth = videoRect.width;
-                displayHeight = displayWidth / videoAspectRatio;
-                offsetX = 0;
-                offsetY = (videoRect.height - displayHeight) / 2;
-            }
-            
-            // Since video is flipped, flip the canvas context
-            canvasCtx.scale(-1, 1);
-            canvasCtx.translate(-canvasElement.width, 0);
-
-            if (results.faceLandmarks) {
-                for (const landmarks of results.faceLandmarks) {
-                    // Calculate mouth opening ratio
-                    const mouthOpenRatio = calculateMouthOpenRatio(landmarks);
-                    updateMouthMeter(mouthOpenRatio);
-                    
-                    // Draw complete face mesh tessellation (wireframe)
-                    // Official MediaPipe FACEMESH_TESSELATION connections (complete set)
-                    const faceMeshConnections = [
-                        [127, 34],  [34, 139]
-                    ];
-                    
-                    // Draw tessellation lines with subtle styling
-                    canvasCtx.strokeStyle = 'rgba(70, 70, 70, 0.3)';
-                    canvasCtx.lineWidth = 1;
-                    
-                    faceMeshConnections.forEach(([a, b]) => {
-                        const pointA = landmarks[a];
-                        const pointB = landmarks[b];
-                        
-                        if (pointA && pointB) {
-                            const ax = (pointA.x * displayWidth) + offsetX;
-                            const ay = (pointA.y * displayHeight) + offsetY;
-                            const bx = (pointB.x * displayWidth) + offsetX;
-                            const by = (pointB.y * displayHeight) + offsetY;
-                            
-                            // Draw connection line
-                            canvasCtx.beginPath();
-                            canvasCtx.moveTo(ax, ay);
-                            canvasCtx.lineTo(bx, by);
-                            canvasCtx.stroke();
-                        }
-                    });
-
-                    // Draw all landmarks as small dots
-                    canvasCtx.fillStyle = 'rgba(70, 70, 70, 0.7)';
-                    for (let i = 0; i < landmarks.length; i++) {
-                        const x = (landmarks[i].x * displayWidth) + offsetX;
-                        const y = (landmarks[i].y * displayHeight) + offsetY;
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(x, y, 1, 0, 2 * Math.PI);
-                        canvasCtx.fill();
-                    }
-                    
-
-
-                    // Draw face oval
-                    const faceOval = [
-                        10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
-                        397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
-                        172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10
-                    ];
-                    
-                    canvasCtx.strokeStyle = 'rgba(70, 70, 70, 0.8)';
-                    canvasCtx.lineWidth = 2;
-                    canvasCtx.beginPath();
-                    
-                    for (let i = 0; i < faceOval.length - 1; i++) {
-                        const current = landmarks[faceOval[i]];
-                        const next = landmarks[faceOval[i + 1]];
-                        
-                        const currentX = (current.x * displayWidth) + offsetX;
-                        const currentY = (current.y * displayHeight) + offsetY;
-                        const nextX = (next.x * displayWidth) + offsetX;
-                        const nextY = (next.y * displayHeight) + offsetY;
-                        
-                        if (i === 0) {
-                            canvasCtx.moveTo(currentX, currentY);
-                        }
-                        canvasCtx.lineTo(nextX, nextY);
-                    }
-                    canvasCtx.stroke();
-
-                    // Draw eyes
-                    const leftEye = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246, 33];
-                    const rightEye = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398, 362];
-                    
-                    [leftEye, rightEye].forEach((eye) => {
-                        canvasCtx.beginPath();
-                        for (let i = 0; i < eye.length - 1; i++) {
-                            const current = landmarks[eye[i]];
-                            const next = landmarks[eye[i + 1]];
-                            
-                            const currentX = (current.x * displayWidth) + offsetX;
-                            const currentY = (current.y * displayHeight) + offsetY;
-                            const nextX = (next.x * displayWidth) + offsetX;
-                            const nextY = (next.y * displayHeight) + offsetY;
-                            
-                            if (i === 0) {
-                                canvasCtx.moveTo(currentX, currentY);
-                            }
-                            canvasCtx.lineTo(nextX, nextY);
-                        }
-                        canvasCtx.stroke();
-                    });
-
-                    // Draw lips using correct MediaPipe official lip connections
-                    // Based on official MediaPipe face_landmarks_connections.ts
-                    const lipConnections = [
-                        // Outer lip contour
-                        [61, 146], [146, 91], [91, 181], [181, 84], [84, 17], [17, 314], [314, 405],
-                        [405, 321], [321, 375], [375, 291], 
-                        // Upper lip outer (excluding corners)
-                        [61, 185], [185, 40], [40, 39], [39, 37], [37, 0], [0, 267], [267, 269], 
-                        [269, 270], [270, 409], [409, 291],
-                        // Inner lip contour
-                        [78, 95], [95, 88], [88, 178], [178, 87], [87, 14], [14, 317], [317, 402], 
-                        [402, 318], [318, 324], [324, 308], 
-                        [78, 191], [191, 80], [80, 81], [81, 82], [82, 13], [13, 312], [312, 311], 
-                        [311, 310], [310, 415], [415, 308]
-                    ];
-                    
-                    // Draw lip connections
-                    canvasCtx.strokeStyle = 'rgba(70, 70, 70, 0.8)';
-                    canvasCtx.lineWidth = 2;
-                    
-                    lipConnections.forEach(([startIdx, endIdx]) => {
-                        const start = landmarks[startIdx];
-                        const end = landmarks[endIdx];
-                        
-                        if (start && end) {
-                            const startX = (start.x * displayWidth) + offsetX;
-                            const startY = (start.y * displayHeight) + offsetY;
-                            const endX = (end.x * displayWidth) + offsetX;
-                            const endY = (end.y * displayHeight) + offsetY;
-                            
-                            canvasCtx.beginPath();
-                            canvasCtx.moveTo(startX, startY);
-                            canvasCtx.lineTo(endX, endY);
-                            canvasCtx.stroke();
-                        }
-                    });
-                }
-            }
-            canvasCtx.restore();
-        }
-
-        // Calculate mouth opening ratio using MediaPipe landmarks
         function calculateMouthOpenRatio(landmarks) {
-            // Correct MediaPipe mouth landmarks for 468-point model
-            const upperLipTop = landmarks[13];     // Upper lip center
-            const lowerLipBottom = landmarks[14];  // Lower lip center
-            const leftMouthCorner = landmarks[61]; // Left mouth corner
-            const rightMouthCorner = landmarks[291]; // Right mouth corner
+            const upperLipTop = landmarks[13];
+            const lowerLipBottom = landmarks[14];
+            const leftMouthCorner = landmarks[61];
+            const rightMouthCorner = landmarks[291];
             
-            // Check if landmarks exist
-            if (!upperLipTop || !lowerLipBottom || !leftMouthCorner || !rightMouthCorner) {
-                console.warn('Missing mouth landmarks');
-                return 0;
-            }
+            if (!upperLipTop || !lowerLipBottom || !leftMouthCorner || !rightMouthCorner) return 0;
             
-            // Calculate vertical distance (mouth opening)
             const verticalDistance = Math.abs(lowerLipBottom.y - upperLipTop.y);
-            
-            // Calculate horizontal distance (mouth width) for normalization
             const horizontalDistance = Math.abs(rightMouthCorner.x - leftMouthCorner.x);
             
-            // Prevent division by zero
-            if (horizontalDistance === 0) {
-                return 0;
-            }
+            if (horizontalDistance === 0) return 0;
             
-            // Calculate the ratio of vertical distance to horizontal distance
-            const distanceRatio = verticalDistance / horizontalDistance;
+            const ratio = verticalDistance / horizontalDistance;
             
-            // Debug logging (remove in production)
-            if (Math.random() < 0.1) { // Log only 10% of the time
-                console.log(`Distance Ratio: ${distanceRatio.toFixed(4)}, Vertical: ${verticalDistance.toFixed(4)}, Horizontal: ${horizontalDistance.toFixed(4)}`);
-            }
+            const minRatio = 0.05; // Calibrated threshold for a closed mouth
+            const maxRatio = 0.8;  // Calibrated threshold for a wide-open mouth
             
-            // Your specified calibration:
-            // If distance ratio < 0.02 then mouth opening = 0
-            // If distance ratio > 1.5 then mouth opening = 1 (using your exact specification of 1.5 times width)
-            const minRatio = 0.02;   // Closed mouth threshold
-            const maxRatio = 1.5;    // Wide open mouth threshold (1.5 times the mouth width as you specified)
-            
-            // Linear interpolation between min and max
-            if (distanceRatio <= minRatio) {
-                return 0;
-            } else if (distanceRatio >= maxRatio) {
-                return 1;
-            } else {
-                return (distanceRatio - minRatio) / (maxRatio - minRatio);
-            }
+            if (ratio <= minRatio) return 0;
+            if (ratio >= maxRatio) return 1;
+            return (ratio - minRatio) / (maxRatio - minRatio);
         }
 
-        // Update mouth opening meter display
         function updateMouthMeter(ratio) {
-            if (mouthMeter.style.display === 'none') {
-                mouthMeter.style.display = 'block';
-            }
-            
             const percentage = Math.round(ratio * 100);
             mouthFill.style.width = `${percentage}%`;
             mouthText.textContent = `${percentage}%`;
-            
-            // Change color based on opening level
-            if (percentage < 20) {
-                mouthFill.style.background = '#4CAF50'; // Green for closed
-            } else if (percentage < 60) {
-                mouthFill.style.background = 'linear-gradient(90deg, #4CAF50, #FFC107)'; // Green to yellow
-            } else {
-                mouthFill.style.background = 'linear-gradient(90deg, #FFC107, #FF5722)'; // Yellow to red
+        }
+        
+        // ========================================
+        // WebSocket Integration & UI Logic
+        // ========================================
+        
+        function connectToServer() {
+            const code = sessionCodeInput.value.trim().toUpperCase();
+            if (code.length !== 7) {
+                alert('Please enter a valid 7-character code.');
+                return;
             }
+            sevenCharCode = code;
+
+            setConnectionStatus('connecting', 'Connecting...');
+            connectBtn.disabled = true;
+
+            socket = new WebSocket(SERVER_URL);
+
+            socket.onopen = () => {
+                console.log('WebSocket connection opened.');
+                // Identify this web client to the server
+                socket.send(JSON.stringify({ type: 'web_app_connect', sevenCharCode }));
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('Message from server:', data);
+                
+                switch(data.type) {
+                    case 'connection_successful':
+                        isConnected = true;
+                        setConnectionStatus('connected', 'Connected');
+                        // Transition UI
+                        websocketPanel.style.display = 'none';
+                        mouthMeter.style.display = 'block';
+                        break;
+                    case 'error':
+                        setConnectionStatus('error', `Error: ${data.message}`);
+                        socket.close(); // Close the socket on error
+                        break;
+                }
+            };
+
+            socket.onclose = () => {
+                console.log('WebSocket connection closed.');
+                isConnected = false;
+                setConnectionStatus('disconnected', 'Disconnected');
+                connectBtn.disabled = false;
+                sessionCodeInput.disabled = false;
+                // Transition UI back
+                websocketPanel.style.display = 'block';
+                mouthMeter.style.display = 'none';
+            };
+
+            socket.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+                setConnectionStatus('error', 'Connection Failed');
+                connectBtn.disabled = false;
+                sessionCodeInput.disabled = false;
+            };
         }
 
-        // Resize canvas to match video
-        function resizeCanvas() {
-            const videoRect = videoElement.getBoundingClientRect();
-            canvasElement.width = videoRect.width;
-            canvasElement.height = videoRect.height;
+        function setConnectionStatus(status, text) {
+            connectionStatus.textContent = text;
+            connectionStatus.className = 'connection-status'; // Reset classes
+            connectionStatus.classList.add(`status-${status}`);
         }
 
-        // Initialize everything
+        // ========================================
+        // Main Initialization
+        // ========================================
+
         async function init() {
             try {
-                // Wait for MediaPipe modules to load
+                // Wait for MediaPipe modules to be available on the window object
                 while (!window.FaceLandmarker || !window.FilesetResolver) {
                     await new Promise(resolve => setTimeout(resolve, 100));
                 }
                 
-                loadingElement.innerHTML = "Loading MediaPipe Face Landmarker...";
+                loadingElement.innerHTML = "Loading MediaPipe Model...";
                 await createFaceLandmarker();
                 
-                loadingElement.innerHTML = "Starting camera...";
+                loadingElement.innerHTML = "Requesting Camera Access...";
                 await enableCam();
                 
-                // Set up video event listeners
-                videoElement.addEventListener('loadedmetadata', () => {
-                    resizeCanvas();
+                videoElement.addEventListener('loadeddata', () => {
                     loadingElement.style.display = 'none';
+                    websocketPanel.style.display = 'block'; // Show connection panel after loading
                 });
-
-                window.addEventListener('resize', resizeCanvas);
+                
+                // Set up event listeners
+                connectBtn.addEventListener('click', connectToServer);
 
             } catch (error) {
-                console.error('Error initializing:', error);
-                loadingElement.innerHTML = `
+                console.error('Initialization Error:', error);
+                loadingElement.style.display = 'none'; // Hide loading spinner
+                 document.body.innerHTML = `
                     <div class="error">
                         <strong>Initialization Error</strong><br>
-                        Please allow camera access and refresh the page<br>
+                        Could not access camera or load models. Please check permissions and refresh.<br>
                         <small>${error.message}</small>
                     </div>
                 `;
             }
         }
 
-        // Start when page loads
+        // Start when the page loads
         window.addEventListener('load', init);
 
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
+            if (socket) socket.close();
             if (videoElement.srcObject) {
                 videoElement.srcObject.getTracks().forEach(track => track.stop());
             }
         });
-
-        // ========================================
-        // WebSocket Integration Module
-        // ========================================
 
     </script>
 </body>
