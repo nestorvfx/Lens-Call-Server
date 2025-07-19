@@ -6,240 +6,237 @@ const PORT = process.env.PORT || 3000;
 // Create WebSocket server
 const wss = new WebSocket.Server({ port: PORT });
 
-/**
- * In-memory data stores for session management.
- * In a production environment, you might use a more persistent store like Redis.
- */
-const sessions = new Map(); // Stores Lens Studio session data. Key: sessionHash, Value: { baseSessionCode, hostSocket }
-const webAppConnections = new Map(); // Stores active Web App connections. Key: sevenCharCode, Value: webAppSocket
-const activeBaseCodes = new Set(); // Tracks used 6-character base codes to ensure uniqueness.
+const sessions = new Map();
+const webClients = new Map();
+const activeBaseCodes = new Set();
 
 console.log(`🚀 WebSocket server started on ws://localhost:${PORT}`);
 
-/**
- * Generates a unique 6-character alphanumeric code for a new session.
- * @returns {string} A unique 6-character code.
- */
+// --- Helper Functions ---
+
 function generateUniqueBaseCode() {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code;
     do {
-        code = '';
-        for (let i = 0; i < 6; i++) {
-            code += characters.charAt(Math.floor(Math.random() * characters.length));
-        }
-    } while (activeBaseCodes.has(code)); // Ensure the code is not already in use
+        code = Array.from({ length: 6 }, () => CHARS.charAt(Math.floor(Math.random() * CHARS.length))).join('');
+    } while (activeBaseCodes.has(code));
     activeBaseCodes.add(code);
     return code;
 }
 
-// WebSocket server connection handler
-wss.on('connection', (ws) => {
-    console.log('🔌 New client connected.');
-
-    // Temporary storage for the client's associated code, determined after message exchange
-    let clientCode = null;
-
-    // Message handler for this specific client
-    ws.on('message', (message) => {
-        let data;
-        try {
-            data = JSON.parse(message);
-        } catch (e) {
-            console.error('Error parsing JSON message:', e);
-            return;
-        }
-
-        console.log('➡️ Received message:', data.type);
-
-        switch (data.type) {
-            // --- Message from Lens Studio Host ---
-            case 'lens_studio_request_session':
-                handleLensSessionRequest(ws, data);
-                break;
-
-            // --- Message from Web App Client ---
-            case 'web_app_connect':
-                clientCode = handleWebAppConnection(ws, data);
-                break;
-
-            // --- Data Message from Web App Client ---
-            case 'mouth_data':
-                handleMouthData(data);
-                break;
-
-            default:
-                console.warn(`❓ Unknown message type: ${data.type}`);
-        }
-    });
-
-    // Close handler for this specific client
-    ws.on('close', () => {
-        console.log('🔌 Client disconnected.');
-        // If the disconnected client was a Web App, clean up its connection state
-        if (clientCode && webAppConnections.has(clientCode)) {
-            const baseCode = clientCode.substring(0, 6);
-            const session = findSessionByBaseCode(baseCode);
-
-            // Notify Lens Studio that the web app has disconnected
-            if (session && session.hostSocket.readyState === WebSocket.OPEN) {
-                session.hostSocket.send(JSON.stringify({
-                    type: 'web_app_disconnected',
-                    sevenCharCode: clientCode
-                }));
-            }
-            webAppConnections.delete(clientCode);
-            console.log(`🧹 Cleaned up Web App connection for code: ${clientCode}`);
-        }
-        // If the disconnected client was a Lens host, we need to find and clean up the session
-        else {
-             let sessionHashToDelete = null;
-             sessions.forEach((session, hash) => {
-                 if (session.hostSocket === ws) {
-                     sessionHashToDelete = hash;
-                 }
-             });
-
-             if (sessionHashToDelete) {
-                 const session = sessions.get(sessionHashToDelete);
-                 activeBaseCodes.delete(session.baseSessionCode);
-                 sessions.delete(sessionHashToDelete);
-                 console.log(`🧹 Cleaned up Lens Studio session: ${sessionHashToDelete} (Code: ${session.baseSessionCode})`);
-                 
-                 // Optional: Disconnect all Web Apps associated with this session
-                 webAppConnections.forEach((socket, code) => {
-                    if (code.startsWith(session.baseSessionCode)) {
-                        socket.close();
-                    }
-                 });
-             }
-        }
-    });
-
-    ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
-    });
-});
-
-/**
- * Handles the initial session request from a Lens Studio host.
- * @param {WebSocket} ws - The host's WebSocket connection.
- * @param {object} data - The incoming message data, containing the sessionHash.
- */
-function handleLensSessionRequest(ws, data) {
-    const { sessionHash } = data;
-    if (!sessionHash) {
-        console.error('❌ Lens session request missing sessionHash.');
-        return;
-    }
-
-    // Generate a unique 6-character base code for the session
-    const baseSessionCode = generateUniqueBaseCode();
-
-    // Store the new session information
-    sessions.set(sessionHash, {
-        baseSessionCode,
-        hostSocket: ws
-    });
-
-    // Send the base code back to the Lens Studio client
-    ws.send(JSON.stringify({
-        type: 'lens_studio_session_response',
-        success: true,
-        baseSessionCode: baseSessionCode,
-        sessionHash: sessionHash
-    }));
-
-    console.log(`✅ Session created for hash ${sessionHash} with code ${baseSessionCode}`);
-}
-
-/**
- * Handles a connection attempt from a Web App client.
- * @param {WebSocket} ws - The web app's WebSocket connection.
- * @param {object} data - The incoming message data, containing the sevenCharCode.
- * @returns {string|null} The validated 7-character code if successful.
- */
-function handleWebAppConnection(ws, data) {
-    const { sevenCharCode } = data;
-
-    // Validate the code
-    if (!sevenCharCode || sevenCharCode.length !== 7) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Invalid code format. Must be 7 characters.' }));
-        ws.close();
-        return null;
-    }
-
-    // Check if the code is already in use
-    if (webAppConnections.has(sevenCharCode)) {
-        ws.send(JSON.stringify({ type: 'error', message: 'This code is already in use.' }));
-        ws.close();
-        return null;
-    }
-
-    // Find the corresponding Lens Studio session from the first 6 chars of the code
-    const baseCode = sevenCharCode.substring(0, 6);
-    const session = findSessionByBaseCode(baseCode);
-
-    if (!session) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Invalid session code. Please check the code and try again.' }));
-        ws.close();
-        return null;
-    }
-
-    // The connection is valid. Store it.
-    webAppConnections.set(sevenCharCode, ws);
-    console.log(`🔗 Web App connected with code: ${sevenCharCode}`);
-
-    // Notify the Web App client of successful connection
-    ws.send(JSON.stringify({ type: 'connection_successful' }));
-
-    // Notify the Lens Studio host that a web app has connected
-    if (session.hostSocket.readyState === WebSocket.OPEN) {
-        session.hostSocket.send(JSON.stringify({
-            type: 'web_app_connected',
-            sevenCharCode: sevenCharCode
-        }));
-    }
-    
-    return sevenCharCode; // Return the code to associate it with the connection
-}
-
-/**
- * Forwards mouth tracking data from a Web App to the correct Lens Studio host.
- * @param {object} data - The incoming mouth data, containing sevenCharCode and mouthOpenness.
- */
-function handleMouthData(data) {
-    const { sevenCharCode, mouthOpenness } = data;
-    if (!sevenCharCode || mouthOpenness === undefined) return;
-
-    // Find the session associated with this code
-    const baseCode = sevenCharCode.substring(0, 6);
-    const session = findSessionByBaseCode(baseCode);
-
-    if (session && session.hostSocket.readyState === WebSocket.OPEN) {
-        // Forward the data to the correct Lens Studio host
-        session.hostSocket.send(JSON.stringify({
-            type: 'mouth_data',
-            sevenCharCode,
-            mouthOpenness,
-            timestamp: Date.now()
-        }));
-    } else {
-        // This can happen if the Lens host disconnects but the web app doesn't
-        console.warn(`⚠️ Received mouth data for an inactive session: ${sevenCharCode}`);
-    }
-}
-
-/**
- * Finds a session by its 6-character base code.
- * @param {string} baseCode - The 6-character session code.
- * @returns {object|undefined} The session object or undefined if not found.
- */
 function findSessionByBaseCode(baseCode) {
-    for (let session of sessions.values()) {
+    for (const session of sessions.values()) {
         if (session.baseSessionCode === baseCode) {
             return session;
         }
     }
     return undefined;
+}
+
+// --- WebSocket Event Handlers ---
+
+wss.on('connection', (ws) => {
+    console.log('🔌 New client connected.');
+    ws.clientInfo = {
+        type: null,
+        sessionHash: null,
+        connectionId: null,
+        fullKeycode: null,
+    };
+
+    ws.on('message', (message) => {
+        let data;
+        try {
+            let messageStr = message.toString();
+            
+            // Clean up the message - try to find valid JSON by looking for closing brace
+            const lastBraceIndex = messageStr.lastIndexOf('}');
+            if (lastBraceIndex !== -1 && lastBraceIndex < messageStr.length - 1) {
+                const cleanMessage = messageStr.substring(0, lastBraceIndex + 1);
+                const extraChars = messageStr.substring(lastBraceIndex + 1);
+                
+                console.log(`🧹 Cleaned message, removed extra characters: "${extraChars}"`);
+                messageStr = cleanMessage;
+            }
+            
+            data = JSON.parse(messageStr);
+        } catch (e) {
+            console.error('❌ Error parsing JSON message:', message.toString());
+            return;
+        }
+        switch (data.type) {
+            case 'lens_studio_request_session': handleHostSessionRequest(ws, data); break;
+            case 'lens_studio_join_session': handleClientJoinRequest(ws, data); break;
+            case 'user_keycode_assigned': handleUserKeycodeAssignment(data); break;
+            case 'web_app_connect': handleWebAppConnection(ws, data); break;
+            case 'mouth_data': handleMouthData(data); break;
+            default: console.warn(`❓ Unknown message type received: ${data.type}`); break;
+        }
+    });
+
+    ws.on('close', () => handleDisconnection(ws));
+    ws.on('error', (error) => console.error('❌ WebSocket error:', error));
+});
+
+// --- Message Handling Logic (No changes to these functions) ---
+
+function handleHostSessionRequest(ws, data) {
+    const { sessionHash, connectionId } = data;
+    if (!sessionHash || !connectionId) {
+        console.error('❌ Host session request missing sessionHash or connectionId.');
+        return;
+    }
+    console.log(`👑 Host [${connectionId}] requested session with hash [${sessionHash}]`);
+    const baseSessionCode = generateUniqueBaseCode();
+    const newSession = {
+        baseSessionCode,
+        lensClients: new Map(),
+        userCodeMap: new Map(),
+    };
+    newSession.lensClients.set(connectionId, ws);
+    sessions.set(sessionHash, newSession);
+    ws.clientInfo = { type: 'lens_host', sessionHash, connectionId, fullKeycode: null };
+    ws.send(JSON.stringify({
+        type: 'lens_studio_session_response',
+        success: true,
+        baseSessionCode,
+        sessionHash
+    }));
+    console.log(`✅ Session [${sessionHash}] created with code [${baseSessionCode}]`);
+}
+
+function handleClientJoinRequest(ws, data) {
+    const { sessionHash, connectionId } = data;
+    const session = sessions.get(sessionHash);
+    if (!session) {
+        console.error(`❌ Client [${connectionId}] tried to join non-existent session [${sessionHash}]`);
+        ws.send(JSON.stringify({ type: 'error', message: 'Session not found.' }));
+        return;
+    }
+    console.log(`🔗 Client [${connectionId}] joining session [${sessionHash}]`);
+    session.lensClients.set(connectionId, ws);
+    ws.clientInfo = { type: 'lens_client', sessionHash, connectionId, fullKeycode: null };
+    ws.send(JSON.stringify({
+        type: 'lens_studio_join_response',
+        success: true,
+        baseSessionCode: session.baseSessionCode,
+        sessionHash
+    }));
+}
+
+function handleUserKeycodeAssignment(data) {
+    const { sessionHash, userMapping } = data;
+    const session = sessions.get(sessionHash);
+    if (!session || !userMapping || !userMapping.connectionId) return;
+    session.userCodeMap.set(userMapping.fullKeycode, userMapping.connectionId);
+    const lensClientWs = session.lensClients.get(userMapping.connectionId);
+    if (lensClientWs) {
+        lensClientWs.clientInfo.fullKeycode = userMapping.fullKeycode;
+    }
+    console.log(`- 📋 Code registered: [${userMapping.displayName}] (${userMapping.connectionId}) -> [${userMapping.fullKeycode}]`);
+}
+
+function handleWebAppConnection(ws, data) {
+    const { sevenCharCode } = data;
+    if (!sevenCharCode || sevenCharCode.length !== 7) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid code format.' }));
+        ws.close();
+        return;
+    }
+    const baseCode = sevenCharCode.substring(0, 6);
+    const session = findSessionByBaseCode(baseCode);
+    if (!session || !session.userCodeMap.has(sevenCharCode)) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid or inactive session code.' }));
+        ws.close();
+        return;
+    }
+    const sessionHash = [...sessions.entries()].find(([hash, s]) => s.baseSessionCode === baseCode)?.[0];
+    ws.clientInfo = { type: 'web_app', fullKeycode: sevenCharCode, sessionHash: sessionHash, connectionId: null };
+    webClients.set(sevenCharCode, ws);
+    ws.send(JSON.stringify({ type: 'connection_successful' }));
+    console.log(`✅ Web App connected with code [${sevenCharCode}]`);
+    session.lensClients.forEach(clientWs => {
+        clientWs.send(JSON.stringify({
+            type: 'web_app_connected',
+            sevenCharCode
+        }));
+    });
+}
+
+// --- THIS IS THE REWRITTEN FUNCTION ---
+
+function handleMouthData(data) {
+    const { sevenCharCode, mouthOpenness } = data;
+    const webClientWs = webClients.get(sevenCharCode);
+
+    // Guard against invalid data or disconnected web clients
+    if (!webClientWs || !webClientWs.clientInfo.sessionHash) return;
+
+    const session = sessions.get(webClientWs.clientInfo.sessionHash);
+    if (!session) return;
+
+    // Find the connectionId of the user who sent this data.
+    const senderConnectionId = session.userCodeMap.get(sevenCharCode);
+    if (!senderConnectionId) {
+        // This can happen if the user disconnected but the web app is still sending data.
+        console.warn(`⚠️ Received mouth data for code [${sevenCharCode}] which has no owner. Ignoring.`);
+        return;
+    }
+
+    // Prepare the message once, before the loop.
+    const message = JSON.stringify({
+        type: 'mouth_data',
+        sevenCharCode,
+        mouthOpenness,
+        timestamp: Date.now()
+    });
+
+    // Iterate through all Lens clients in the session.
+    session.lensClients.forEach((clientWs, clientConnectionId) => {
+        // *** THE CORE LOGIC CHANGE IS HERE ***
+        // Only send the message if the recipient is NOT the original sender.
+        if (clientConnectionId !== senderConnectionId) {
+            if (clientWs.readyState === WebSocket.OPEN) {
+                clientWs.send(message);
+            }
+        }
+    });
+}
+
+function handleDisconnection(ws) {
+    const { type, sessionHash, connectionId, fullKeycode } = ws.clientInfo;
+    console.log(`🔌 Client [${connectionId || fullKeycode}] disconnected.`);
+
+    if (type === 'web_app') {
+        webClients.delete(fullKeycode);
+        const session = sessions.get(sessionHash);
+        if (session) {
+            session.lensClients.forEach(clientWs => {
+                clientWs.send(JSON.stringify({ type: 'web_app_disconnected', sevenCharCode: fullKeycode }));
+            });
+        }
+    } else if (type === 'lens_host' || type === 'lens_client') {
+        const session = sessions.get(sessionHash);
+        if (!session) return;
+        session.lensClients.delete(connectionId);
+        if (fullKeycode) {
+            session.userCodeMap.delete(fullKeycode);
+        }
+        if (type === 'lens_host') {
+            console.log(`💥 Host [${connectionId}] disconnected. Terminating session [${sessionHash}]...`);
+            session.userCodeMap.forEach((connId, code) => {
+                const webClientWs = webClients.get(code);
+                if (webClientWs) {
+                    webClientWs.close();
+                    webClients.delete(code);
+                }
+            });
+            session.lensClients.forEach(clientWs => {
+                clientWs.send(JSON.stringify({ type: 'session_ended', reason: 'Host disconnected.' }));
+                clientWs.close();
+            });
+            activeBaseCodes.delete(session.baseSessionCode);
+            sessions.delete(sessionHash);
+        }
+    }
 }
