@@ -1,10 +1,24 @@
 const WebSocket = require('ws');
+const http = require('http'); // 1. REQUIRE THE HTTP MODULE
 
 // Configuration
 const PORT = process.env.PORT || 3000;
 
-// Create WebSocket server
-const wss = new WebSocket.Server({ port: PORT });
+// --- CREATE AN HTTP SERVER ---
+// This will handle both the WebSocket upgrade requests and our health check pings.
+const server = http.createServer();
+const wss = new WebSocket.Server({ server });
+
+server.on('request', (req, res) => {
+    if (req.url === '/healthcheck') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('ok');
+    }
+});
+
+server.listen(PORT, '0.0.0.0', () => { // Use '0.0.0.0' to be Render-compatible
+    console.log(`🚀 Server started on port ${PORT}`);
+});
 
 const sessions = new Map();
 const webClients = new Map();
