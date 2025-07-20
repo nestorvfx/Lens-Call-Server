@@ -5,16 +5,17 @@ const http = require('http');
 // --- CONFIGURATION ---
 const PORT = process.env.PORT || 3000;
 
-// --- SERVER CREATION ---
-// This single server will handle both HTTP requests (for the health check)
-// and upgrade those requests to WebSockets.
 const server = http.createServer((req, res) => {
     if (req.url === '/healthcheck' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('ok');
-    } else {
-        res.writeHead(404);
-        res.end();
+        return;
+    }
+    
+    if (!req.headers.upgrade || req.headers.upgrade.toLowerCase() !== 'websocket') {
+        res.writeHead(426, { 'Content-Type': 'text/plain' });
+        res.end('Upgrade Required: This endpoint is for WebSocket connections only.');
+        return;
     }
 });
 
