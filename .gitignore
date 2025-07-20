@@ -23,5 +23,4 @@ logs/
 # Misc
 .DS_Store
 coverage/
-
 *.code-workspace
